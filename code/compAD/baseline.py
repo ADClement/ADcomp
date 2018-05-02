@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-
+from sklearn.preprocessing import OneHotEncoder,LabelEncoder
 """
 1.弄三个csv的demo，用来debug用
 2.用户特征太大了，没办法直接加在成pandas，要做格式转换，弄成字典之后再弄成dataframe
@@ -28,7 +28,7 @@ productType     int64
 
 
 """
-data_path="../../preliminary_contest_data/preliminary_contest_data/"
+data_path="../../../preliminary_contest_data/preliminary_contest_data/"
 
 #离散型的特征，数一数有多少个值，每个值有多少个
 def discrete_count(feature_col):     #把那个特征列传进来
@@ -41,6 +41,7 @@ def discrete_count(feature_col):     #把那个特征列传进来
 def View_ad_feature_data():     #把data（dataframe型）传进来
     ad_feature = pd.read_csv(data_path + "adFeature.csv")
     print (ad_feature)
+
 
     #这个能输出都有那些列
     columns=list(ad_feature.columns)
@@ -79,11 +80,24 @@ def user_feature_csv_generate():
 #取几行看看用户特征啥德行
 def View_user_feature_data():
     print ("hello")
+    userfeature=pd.read_csv(data_path+"userFeature.csv",nrows=50)
+    userfeature["house"].fillna("-1",inplace=True)
+    print (userfeature["house"])
+    userfeature["house"] = LabelEncoder().fit_transform(userfeature["house"].apply(int))
+    print (userfeature["house"])
+    print (userfeature["age"].apply(int))
+
+    userfeature["interest5"].fillna(-1, inplace=True)
+    print (userfeature["interest5"])
+    userfeature["interest5"] = LabelEncoder().fit_transform(userfeature["interest5"])
 
 
 
 if __name__=="__main__":
     print ("hello")
-    View_ad_feature_data()
-    user_feature_csv_generate()
+    #View_ad_feature_data()
+    #user_feature_csv_generate()
+    View_user_feature_data()
+
+
 
