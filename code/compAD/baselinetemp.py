@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from sklearn.preprocessing import OneHotEncoder,LabelEncoder
+from sklearn.feature_extraction.text import CountVectorizer
+from scipy import sparse
 """
 1.弄三个csv的demo，用来debug用
 2.用户特征太大了，没办法直接加在成pandas，要做格式转换，弄成字典之后再弄成dataframe
@@ -105,6 +107,126 @@ def user_feature_csv_generate():
 
 
 
+
+#(写一堆函数是怕中间出问题就不能弄了，因为这个数据量太大)
+#把广告特征，用户特征，标签都合起来，并且生成csv。train和test放一起合方便，要不到时候test也得合，太费劲了......
+def train_pred_feature_concat():
+    train_data=pd.read_csv(data_path+"train.csv")
+    #print (train_data)
+    print (1)
+    test_data=pd.read_csv(data_path+"test1.csv")
+    print (2)
+    #print (test_data)
+    #train的-1弄成0，然后test的标签先都打成-1
+    train_data.loc[train_data["label"]==-1,"label"]=0
+    test_data["label"]=-1
+    data=pd.concat([train_data,test_data])   #这里的concat是竖着的concat，直接竖着接起来的
+    print (3)
+    #print (data)
+    ad_feature=pd.read_csv(data_path+"adFeature.csv")
+    user_feature=pd.read_csv(data_path+"userFeature.csv")
+    data=pd.merge(data,ad_feature,on='aid',how='left')     #left:参与合并左侧的dataframe,就是都合到data里
+    data=pd.merge(data,user_feature,on='uid',how='left')
+    print (4)
+    data.to_csv(data_path+"mergedData.csv",index=False)
+    print (data.loc[0:50,:])
+    return data
+
+
+#把合起来的数据的缺失值填成-1（字符的-1）
+def fillNA_data():
+    mergedData=pd.read_csv(data_path+"mergedData.csv")
+    mergedData.fillna("-1",inplace=True)    #缺失值填充成字符的-1，虽然我并不是很知道为啥......先有个区分吧
+    print(mergedData.loc[0:50, :])
+    mergedData.to_csv(data_path+"mergedDataFillna.csv",index=False)
+
+
+def data_final():
+    data=pd.read_csv(data_path+"mergedDataFillna.csv")
+    #print (data)
+    #遇到的一些问题，有人婚姻状况是两个，有很多，这个神奇的操作.不过这个状态少，感觉也没啥关系
+    one_hot_feature = ['LBS', 'age', 'carrier', 'consumptionAbility', 'education', 'gender', 'house', 'os', 'ct','marriageStatus', 'advertiserId', 'campaignId', 'creativeId','adCategoryId', 'productId', 'productType']
+    #这个特征，都是每个里面是598 872 2602 2964 1189 631 5606 5719 5859 5708......这种的，就是比如兴趣爱好标签，他可能有一大堆......这个要处理
+    vector_feature = ['appIdAction', 'appIdInstall', 'interest1', 'interest2', 'interest3', 'interest4', 'interest5','kw1', 'kw2', 'kw3', 'topic1', 'topic2', 'topic3']
+
+    #这一段是把写出花的特征的类别弄成0，1，2这种（婚姻那个觉得也没事，顶多顶多，五六种而已......多个状态并存感觉问题也不大）
+    for feature in one_hot_feature:
+        try:
+            data[feature]=LabelEncoder().fit_transform(data[feature].apply(int))
+        except:
+            data[feature]=LabelEncoder().fit_transform(data[feature])
+
+    train=data[data.label!=-1]
+    train_y=train.pop('label')     #pop的作用，在train里删除label这一列，并且返回label这一列
+    test=data[data.label==-1]
+    #print (test)
+    res=test[['aid','uid']]
+    test=test.drop('label',axis=1)
+    # train_x=train[one_hot_feature]
+    # test_x=test[one_hot_feature]
+    # train_x["creativeSize"]=train["creativeSize"]
+    # test_x["creativeSize"] = test["creativeSize"]
+    train_x=train[['creativeSize']]     #之前的creativeSize没处理过，这里单独弄出来，为了以后拼接用。然后用[[]]就是dataframe格式，[]是series格式
+    test_x=test[['creativeSize']]
+
+    # 虽然lightgbm不用one-hot，但是这个稀疏矩阵的存法，也没办法在lightgbm中找列......所以还是做one-hot吧
+    enc = OneHotEncoder()
+    for feature in one_hot_feature:
+        enc.fit(data[feature].values.reshape(-1,1))
+        train_a = enc.transform(train[feature].values.reshape(-1, 1))
+        test_a = enc.transform(test[feature].values.reshape(-1, 1))
+        train_x=sparse.hstack((train_x,train_a))    #稀疏矩阵的拼接
+        test_x=sparse.hstack((test_x,test_a))
+    print ("one-hot prepared!")
+    #countvectorizer的特征，感觉这个countvectorizer就是加强版的one-hot......
+    cv=CountVectorizer()
+    for feature in vector_feature:
+        #print (data[feature])
+        #print (data[feature].dtypes)
+        cv.fit(data[feature])            #这里的一个启发，以前我都是train和test各自处理，就会有行列类别对不上的情况，比如这个爱好test里有，但是train里没有，然后就要再处理，非常不方便。这里就是，train和test放在一起弄，就不用怕test里有train里没有了
+        train_a=cv.transform(train[feature])
+        #print (train_a)    #从这个输出看，这个countvectorizer就弄成稀疏矩阵（sparse matrix）了
+        test_a=cv.transform(test[feature])
+        train_x=sparse.hstack((train_x,train_a))
+        test_x=sparse.hstack((test_x,test_a))      #存成了稀疏矩阵可以直接用lightgbm
+    print("cv prepared!")
+    #print (train_x)
+    #print (train_y)
+    #print (test_x)
+    #print (train_x)
+    sparse.save_npz(data_path+"train_x.npz",train_x)
+    sparse.save_npz(data_path + "test_x.npz", test_x)
+    train_y.to_csv(data_path+"train_y.csv",index=False)
+    #tee=sparse.load_npz(data_path+"train_x.npz")
+    #print (tee)
+
+
+
+
+
+
+
+
+
+
+
+
+
+#下两个函数都是当小白鼠用的
+
+#查看数据前50行，看样子这种
+#还有一些代码里不确定的，可以拿出来几行数据在这里当小白鼠
+def view_data():
+    temp=pd.read_csv(data_path+"mergedDataFillna.csv",nrows=300)
+    #print (temp)
+    #print (temp[['appIdAction', 'appIdInstall']])
+
+    #one-hot的代码可以输出下边的东西理解一下。那个OneHotEncoder的fit里，得放一个最后reshape(-1,1)之后出来的二维array
+    print (temp["marriageStatus"])
+    print (temp["marriageStatus"].values)
+    print (temp["marriageStatus"].values.reshape(-1,1))
+
+
 #取几行看看用户特征啥德行,每次的结果都记下来，否则太大了不好弄
 def View_user_feature_data():
     print ("hello")
@@ -139,45 +261,6 @@ def View_user_feature_data():
     # for feature in columns:
     #     discrete_count(ad_feature[feature])
 
-#(写一堆函数是怕中间出问题就不能弄了，因为这个数据量太大)
-#把广告特征，用户特征，标签都合起来，并且生成csv。train和test放一起合方便，要不到时候test也得合，太费劲了......
-def train_pred_feature_concat():
-    train_data=pd.read_csv(data_path+"train.csv")
-    #print (train_data)
-    print (1)
-    test_data=pd.read_csv(data_path+"test1.csv")
-    print (2)
-    #print (test_data)
-    #train的-1弄成0，然后test的标签先都打成-1
-    train_data.loc[train_data["label"]==-1,"label"]=0
-    test_data["label"]=-1
-    data=pd.concat([train_data,test_data])   #这里的concat是竖着的concat，直接竖着接起来的
-    print (3)
-    #print (data)
-    ad_feature=pd.read_csv(data_path+"adFeature.csv")
-    user_feature=pd.read_csv(data_path+"userFeature.csv")
-    data=pd.merge(data,ad_feature,on='aid',how='left')     #left:参与合并左侧的dataframe,就是都合到data里
-    data=pd.merge(data,user_feature,on='uid',how='left')
-    print (4)
-    data.to_csv(data_path+"mergedData.csv",index=False)
-    print (data.loc[0:50,:])
-    return data
-
-
-
-def fillNA_data():
-    mergedData=pd.read_csv(data_path+"mergedData.csv")
-    mergedData.fillna("-1",inplace=True)    #缺失值填充成字符的-1，虽然我并不是很知道为啥......先有个区分吧
-    print(mergedData.loc[0:50, :])
-    mergedData.to_csv(data_path+"mergedDataFillna.csv",index=False)
-
-
-#查看数据前50行，看样子这种
-def view_data():
-    temp=pd.read_csv(data_path+"mergedDataFillna.csv",nrows=50)
-    print (temp)
-
-
 
 if __name__=="__main__":
     print ("hello")
@@ -187,4 +270,5 @@ if __name__=="__main__":
     #View_user_feature_data()
     #train_pred_feature_concat()
     #fillNA_data()
-    view_data()
+    #view_data()
+    data_final()
