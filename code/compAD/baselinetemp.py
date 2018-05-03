@@ -5,6 +5,7 @@ import lightgbm as lgb
 from sklearn.preprocessing import OneHotEncoder,LabelEncoder
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
+from sklearn.externals import joblib
 from scipy import sparse
 """
 1.弄三个csv的demo，用来debug用
